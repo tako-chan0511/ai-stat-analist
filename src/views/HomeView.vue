@@ -1,53 +1,75 @@
 <template>
-  <div class="container">
-    <h1>AI 統計アナリスト</h1>
+  <div class="analysis-single">
+    <h2 class="view-title">単独分析</h2>
 
-    <div class="button-group">
-      <StatsButton
-        v-for="cat in categories"
-        :key="cat.key"
-        :category="cat"
-        :loading="loading"
-        @analyze="handleAnalyze"
-      />
-    </div>
+    <CategorySelector
+      :categories="categories"
+      :selected="selectedCategory"
+      @select="onSelectCategory"
+    />
 
-    <div v-if="error" class="error">{{ error }}</div>
-    <div v-else-if="result" class="result">
-      <!-- 結果のレンダリング。Chart.js やテーブル表示など -->
-      <pre>{{ result }}</pre>
-    </div>
+    <SearchArea
+      v-model:question="question"
+      :disabled="!selectedCategory"
+      :loading="loading"
+      @analyze="getAnalysis"
+    />
+
+    <Loader v-if="loading" />
+    <ErrorMessage v-if="error" :message="error" />
+    <AnalysisResults v-if="analysisResult" :result="analysisResult" />
   </div>
 </template>
 
-<script lang="ts" setup>
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
 import { categories } from '@/data/estatData'
-import StatsButton from '@/components/StatsButton.vue'
-import useAnalyzeStats from '@/composables/useAnalyzeStats'
+import type { CategoryDefinition } from '@/data/estatData'
+import useAnalyzeStats, { AnalyzePayload } from '@/composables/useAnalyzeStats'
+import CategorySelector from '@/components/CategorySelector.vue'
+import SearchArea from '@/components/SearchArea.vue'
+import Loader from '@/components/Loader.vue'
+import ErrorMessage from '@/components/ErrorMessage.vue'
+import AnalysisResults from '@/components/AnalysisResults.vue'
 
-const { loading, result, error, analyzeStats } = useAnalyzeStats()
+const selectedCategory = ref<CategoryDefinition|null>(null)
+const question         = ref('')
+const { loading, result: analysisResult, error, analyzeStats } = useAnalyzeStats()
 
-function handleAnalyze(key: string) {
-  const cat = categories.find(c => c.key === key)
-  if (!cat) {
-    console.warn(`Unknown category: ${key}`)
-    return
-  }
-  analyzeStats(cat.filter)
+function onSelectCategory(cat: CategoryDefinition) {
+  selectedCategory.value = cat
+  question.value         = cat.defaultQuestion || ''
 }
+
+async function getAnalysis() {
+  if (!selectedCategory.value || !question.value.trim()) return
+
+  const payload: AnalyzePayload = {
+    question:    question.value,
+    filter:      selectedCategory.value.filters,
+    statsDataId: selectedCategory.value.id,
+    categoryInfo: {
+      name: selectedCategory.value.name,
+      unit: selectedCategory.value.unit
+    }
+  }
+  await analyzeStats(payload)
+}
+
+onMounted(() => {
+  if (categories.length) onSelectCategory(categories[0])
+})
 </script>
 
 <style scoped>
-.button-group {
-  display: flex;
-  flex-wrap: wrap;
+.analysis-single {
+  max-width: 900px;
+  margin: 2rem auto;
+  padding: 0 1rem;
 }
-.error {
-  color: red;
-  margin-top: 1rem;
-}
-.result {
-  margin-top: 1rem;
-  white-space: pre-wrap;
+.view-title {
+  text-align: center;
+  font-size: 1.5rem;
+  margin-bottom: 1rem;
 }
 </style>
