@@ -1,234 +1,87 @@
 <template>
   <div id="app">
     <div class="analyst-container">
-      <header class="app-header">
-        <h1>AI統計アナリスト</h1>
-        <p>e-Statの統計データを、AIが分かりやすく解説・可視化します。</p>
-      </header>
+      <AppHeader />
 
-      <main>
-        <div class="category-selection">
-          <h2>分析したい統計データを選択してください</h2>
-          <div class="category-buttons">
-            <button
-              v-for="category in categories"
-              :key="category.id"
-              @click="selectCategory(category)"
-              :class="{ active: selectedCategory?.id === category.id }"
-            >
-              {{ category.name }}
-            </button>
-          </div>
-        </div>
+      <CategorySelector
+        :categories="categories"
+        :selected="selectedCategory"
+        @select="onSelectCategory"
+      />
 
-        <div class="search-area">
-          <textarea
-            v-model="question"
-            placeholder="AIへの質問を入力してください..."
-            rows="3"
-            class="question-textarea"
-            :disabled="!selectedCategory"
-          ></textarea>
-          <button @click="getAnalysis" :disabled="loading || !selectedCategory">
-            <span v-if="!loading">AIに質問する</span>
-            <span v-else class="loading-state">
-              <div class="loading-spinner-small"></div>
-              分析中...
-            </span>
-          </button>
-        </div>
+      <SearchArea
+        v-model:question="question"
+        :disabled="!selectedCategory"
+        :loading="loading"
+        @analyze="getAnalysis"
+      />
 
-        <div v-if="loading" class="loading-spinner-large"></div>
+      <Loader v-if="loading" />
 
-        <div v-if="error" class="error-message">
-          <strong>エラー:</strong> {{ error }}
-        </div>
+      <ErrorMessage v-if="error" :message="error" />
 
-        <div v-if="analysisResult" class="results-area">
-          <div class="explanation-card">
-            <h2>AIによる解説</h2>
-            <p>{{ analysisResult.explanation }}</p>
-          </div>
-          <div class="chart-card">
-            <h2>データの可視化</h2>
-            <DataChart 
-              v-if="analysisResult.chartData"
-              :chart-type="analysisResult.chartType" 
-              :chart-data="analysisResult.chartData"
-            />
-          </div>
-        </div>
-      </main>
+      <AnalysisResults v-if="analysisResult" :result="analysisResult" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
-import DataChart from './components/DataChart.vue';
-import { estatCategories, type EStatCategory } from './services/estatData';
+import { ref, onMounted } from 'vue'
+import { categories } from '@/data/estatData'
+import type { CategoryDefinition } from '@/data/estatData'
 
-const categories = ref<EStatCategory[]>(estatCategories);
-const selectedCategory = ref<EStatCategory | null>(null);
-const question = ref('');
-const loading = ref(false);
-const error = ref('');
-const analysisResult = ref<any>(null);
+import AppHeader        from '@/components/AppHeader.vue'
+import CategorySelector from '@/components/CategorySelector.vue'
+import SearchArea       from '@/components/SearchArea.vue'
+import Loader           from '@/components/Loader.vue'
+import ErrorMessage     from '@/components/ErrorMessage.vue'
+import AnalysisResults  from '@/components/AnalysisResults.vue'
+import useAnalyzeStats  from '@/composables/useAnalyzeStats'
 
-const selectCategory = (category: EStatCategory) => {
-  selectedCategory.value = category;
-  question.value = category.defaultQuestion;
-  getAnalysis(); 
-};
+const selectedCategory = ref<CategoryDefinition | null>(null)
+const question = ref<string>('')
 
-const getAnalysis = async () => {
+const { loading, result: analysisResult, error, analyzeStats } = useAnalyzeStats()
+
+function onSelectCategory(cat: CategoryDefinition) {
+  selectedCategory.value = cat
+  question.value = cat.defaultQuestion || ''
+  getAnalysis()
+}
+
+async function getAnalysis() {
   if (!selectedCategory.value) {
-    error.value = '分析する統計カテゴリを選択してください。';
-    return;
+    error.value = '統計カテゴリを選択してください。'
+    return
   }
   if (!question.value.trim()) {
-    error.value = '質問を入力してください。';
-    return;
+    error.value = '質問を入力してください。'
+    return
   }
 
-  loading.value = true;
-  error.value = '';
-  analysisResult.value = null;
-
-  try {
-    const response = await fetch('/api/analyze-stats', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        question: question.value,
-        statsDataId: selectedCategory.value.id,
-        filters: selectedCategory.value.filters,
-        categoryInfo: {
-          name: selectedCategory.value.name,
-          unit: selectedCategory.value.unit,
-        }
-      }),
-    });
-
-    const data = await response.json();
-
-    if (response.ok) {
-      analysisResult.value = data;
-    } else {
-      error.value = data.error || '分析に失敗しました。';
+  // 「filters」→「filter」に修正し、バックエンドの必須チェックを通過させる
+  await analyzeStats({
+    question: question.value,
+    filter: selectedCategory.value.filters,
+    categoryInfo: {
+      name: selectedCategory.value.name,
+      unit: selectedCategory.value.unit
     }
-  } catch (e: any) {
-    error.value = `通信エラーが発生しました: ${e.message}`;
-  } finally {
-    loading.value = false;
+  })
+}
+
+// 起動時に最初のカテゴリを選択
+onMounted(() => {
+  if (categories.length) {
+    onSelectCategory(categories[0])
   }
-};
+})
 </script>
 
-<style>
-:root {
-  --primary-color: #1a73e8;
-  --background-color: #f8f9fa;
-  --card-background-color: #ffffff;
-  --text-color: #202124;
-  --sub-text-color: #5f6368;
-  --border-color: #dadce0;
-  --button-hover-color: #185abc;
-}
-body {
-  font-family: 'Google Sans', 'Noto Sans JP', sans-serif;
-  margin: 0;
-  background-color: var(--background-color);
-  color: var(--text-color);
-}
-#app { padding: 2rem; }
-.analyst-container { max-width: 900px; margin: 0 auto; }
-.app-header { text-align: center; margin-bottom: 2.5rem; }
-.app-header h1 { font-size: 2.5rem; font-weight: 500; color: var(--primary-color); }
-.app-header p { font-size: 1.1rem; color: var(--sub-text-color); }
-
-.category-selection {
-  margin-bottom: 2rem;
-}
-.category-selection h2 {
-  font-size: 1.2rem;
-  text-align: center;
-  margin-bottom: 1.5rem;
-  color: var(--sub-text-color);
-}
-.category-buttons {
-  display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 1rem;
-}
-.category-buttons button {
-  padding: 0.75rem 1.5rem;
-  border: 1px solid var(--border-color);
-  border-radius: 2rem;
-  background-color: var(--card-background-color);
-  color: var(--text-color);
-  font-size: 1rem;
-  cursor: pointer;
-  transition: all 0.2s ease-in-out;
-}
-.category-buttons button:hover {
-  background-color: #f1f1f1;
-}
-.category-buttons button.active {
-  background-color: var(--primary-color);
-  color: white;
-  border-color: var(--primary-color);
-  font-weight: 500;
-}
-
-.search-area {
-  background: var(--card-background-color);
+<style scoped>
+.analyst-container {
+  max-width: 900px;
+  margin: 0 auto;
   padding: 2rem;
-  border-radius: 16px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  margin-bottom: 2rem;
 }
-.question-textarea {
-  width: 100%;
-  padding: 1rem;
-  font-size: 1.1rem;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  box-sizing: border-box;
-  resize: vertical;
-  margin-bottom: 1rem;
-}
-.question-textarea:focus {
-  outline: none;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
-}
-.analyze-button {
-  width: 100%;
-  padding: 1rem;
-  font-size: 1.1rem;
-  font-weight: 500;
-  color: white;
-  background-color: var(--primary-color);
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 0.5rem;
-}
-.analyze-button:hover:not(:disabled) { background-color: var(--button-hover-color); }
-.analyze-button:disabled { background-color: #a0c3ff; cursor: not-allowed; }
-.loading-state { display: flex; align-items: center; gap: 0.75rem; }
-.loading-spinner-small { width: 20px; height: 20px; border: 3px solid rgba(255, 255, 255, 0.3); border-radius: 50%; border-top-color: #ffffff; animation: spin 1s ease infinite; }
-.loading-spinner-large { width: 48px; height: 48px; border: 5px solid rgba(0, 0, 0, 0.1); border-radius: 50%; border-top-color: var(--primary-color); animation: spin 1s ease infinite; margin: 3rem auto; }
-@keyframes spin { to { transform: rotate(360deg); } }
-.error-message { margin-top: 1.5rem; padding: 1rem; background-color: #fdeaed; color: #a50e0e; border: 1px solid #f4c7c7; border-radius: 8px; }
-.results-area { display: grid; grid-template-columns: 1fr; gap: 2rem; }
-.explanation-card, .chart-card { background: var(--card-background-color); padding: 2rem; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-.explanation-card h2, .chart-card h2 { margin-top: 0; font-size: 1.5rem; font-weight: 500; border-bottom: 2px solid var(--primary-color); padding-bottom: 0.5rem; margin-bottom: 1.5rem; }
-.explanation-card p { line-height: 1.8; font-size: 1.1rem; }
 </style>
