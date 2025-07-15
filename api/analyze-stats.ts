@@ -2,10 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 // 型定義
 interface EStatDataValue {
-  '@cat01': string;
-  '@time': string;
-  '@area': string;
-  '$': string;
+  [key: string]: string; // 様々なキー(@cat01, @cat02...)に対応できるよう、柔軟な型に
 }
 
 export default async function handler(
@@ -18,17 +15,17 @@ export default async function handler(
 
   const eStatAppId = process.env.ESTAT_APP_ID;
   const geminiApiKey = process.env.GEMINI_API_KEY;
-  const { question } = req.body;
+  // ★★★ 変更: フロントエンドからfiltersも受け取る ★★★
+  const { question, statsDataId, categoryInfo, filters } = req.body;
 
-  if (!question) {
-    return res.status(400).json({ error: '質問がありません。' });
+  if (!question || !statsDataId || !categoryInfo || !filters) {
+    return res.status(400).json({ error: '必須パラメータが不足しています。' });
   }
   if (!eStatAppId || !geminiApiKey) {
     return res.status(500).json({ error: 'APIキーがサーバー側で設定されていません。' });
   }
 
   try {
-    const statsDataId = '0000010101'; 
     const eStatUrl = `https://api.e-stat.go.jp/rest/3.0/app/json/getStatsData?appId=${eStatAppId}&statsDataId=${statsDataId}`;
 
     console.log('Fetching data from e-Stat...');
@@ -49,7 +46,7 @@ export default async function handler(
     }
     console.log(`Successfully fetched ${values.length} records from e-Stat.`);
 
-    const analysisResult = await getAnalysisFromAI(question, values, geminiApiKey);
+    const analysisResult = await getAnalysisFromAI(question, values, categoryInfo, filters, geminiApiKey);
 
     res.status(200).json(analysisResult);
 
@@ -59,23 +56,35 @@ export default async function handler(
   }
 }
 
-async function getAnalysisFromAI(question: string, values: EStatDataValue[], apiKey: string) {
-  // ★★★ 改善: 正しいカテゴリコード 'A1101' を使うように修正 ★★★
+async function getAnalysisFromAI(question: string, values: EStatDataValue[], categoryInfo: any, filters: any, apiKey: string) {
+  // ★★★ 改善: 汎用的なデータ絞り込みロジック ★★★
   const simplifiedData = values
-    .filter(v => v['@cat01'] === 'A1101' && v['@area'] === '00000') 
+    .filter(v => {
+      // 1. 渡されたフィルター条件をすべて満たすかチェック
+      const allFiltersMatch = Object.keys(filters).every(key => v[key] === filters[key]);
+      
+      // 2. 地域コードが全国(00000)であるか、または地域コード自体が存在しないかをチェック
+      const isNationwide = !v['@area'] || v['@area'] === '00000';
+
+      return allFiltersMatch && isNationwide;
+    }) 
     .filter(v => parseInt(v['@time'].substring(0, 4)) % 5 === 0)
-    .map(v => ({ year: v['@time'].substring(0, 4), population: parseInt(v.$, 10) }));
+    .map(v => ({
+      year: v['@time'].substring(0, 4),
+      value: parseFloat(v.$),
+    }));
 
   console.log(`Simplified data to ${simplifiedData.length} records for AI analysis.`);
 
   if (simplifiedData.length === 0) {
-    throw new Error("分析対象となるデータが見つかりませんでした。e-Statのデータ構造が変更された可能性があります。");
+    throw new Error("分析対象となるデータが見つかりませんでした。e-Statのデータ構造が変更されたか、この統計には該当データがありません。");
   }
 
   const prompt = `
     あなたは優秀なデータアナリストです。以下の統計データとユーザーからの質問を基に、分析結果を返してください。
+
     **ユーザーからの質問:** 「${question}」
-    **統計データ (日本の総人口推移):**
+    **統計データ (${categoryInfo.name}):**
     \`\`\`json
     ${JSON.stringify(simplifiedData)}
     \`\`\`
@@ -83,6 +92,7 @@ async function getAnalysisFromAI(question: string, values: EStatDataValue[], api
     1.  **explanation**: 統計データから読み取れる傾向や特徴を、初心者にも分かりやすく、200字程度で解説してください。
     2.  **chartType**: このデータを可視化するのに最も適したグラフの種類を 'line' または 'bar' で答えてください。
     3.  **chartData**: グラフ描画用に、データを以下の形式で整形してください。
+
     **出力は、必ず以下のJSON形式に従ってください:**
     \`\`\`json
     {
@@ -92,7 +102,7 @@ async function getAnalysisFromAI(question: string, values: EStatDataValue[], api
         "labels": [],
         "datasets": [
           {
-            "label": "総人口（人）",
+            "label": "${categoryInfo.name} (${categoryInfo.unit})",
             "data": [],
             "backgroundColor": "rgba(26, 115, 232, 0.2)",
             "borderColor": "rgba(26, 115, 232, 1)",
