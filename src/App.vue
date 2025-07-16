@@ -7,25 +7,20 @@
       </header>
       <main>
         <div class="search-box">
-          <h2>1. 分析したい統計データを検索してください</h2>
+          <h2>1. 分析したい統計データを検索</h2>
           <div class="search-form">
-            <input 
-              v-model="searchWord" 
-              @keyup.enter="searchStats"
-              placeholder="例：人口、GDP、失業率"
-            />
-            <button @click="searchStats" :disabled="loading">
-              <span v-if="!loading">検索</span>
-              <span v-else>検索中...</span>
+            <input v-model="searchWord" @keyup.enter="searchStats" placeholder="例：人口、GDP" />
+            <button @click="searchStats" :disabled="loading.search">
+              <span v-if="!loading.search">検索</span><span v-else>検索中...</span>
             </button>
           </div>
         </div>
 
-        <div v-if="loading" class="loading-spinner-large"></div>
+        <div v-if="loading.search" class="loading-spinner-large"></div>
         <div v-if="error" class="error-message"><strong>エラー:</strong> {{ error }}</div>
 
-        <div v-if="statsList.length > 0" class="results-list">
-          <h2>2. 分析する統計表を選択してください</h2>
+        <div v-if="statsList.length > 0 && !selectedStat" class="results-list">
+          <h2>2. 分析する統計表を選択</h2>
           <ul>
             <li v-for="stat in statsList" :key="stat['@id']">
               <button class="stat-select-button" @click="selectStat(stat)">
@@ -34,48 +29,89 @@
             </li>
           </ul>
         </div>
+        
+        <div v-if="selectedStat && metaInfo.length > 0" class="config-box">
+          <h2>3. 分析項目を選択</h2>
+          <p><strong>選択中の統計表:</strong> {{ selectedStat.TITLE.$ }}</p>
+
+          <div v-for="meta in metaInfo" :key="meta['@id']" class="meta-group">
+            <label :for="meta['@id']">{{ meta['@name'] }}:</label>
+            <select :id="meta['@id']" v-model="selectedFilters[meta['@id']]">
+              <option v-for="cls in Array.isArray(meta.CLASS) ? meta.CLASS : [meta.CLASS]" :key="cls['@code']" :value="cls['@code']">
+                {{ cls['@name'] }}
+              </option>
+            </select>
+          </div>
+          
+          <div class="action-buttons">
+            <button @click="resetSelection">戻る</button>
+            <button class="primary" @click="getAnalysis">この内容で分析する</button>
+          </div>
+        </div>
         </main>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
-// import DataChart from './components/DataChart.vue'; // 次のステップで利用
+import { ref, reactive } from 'vue';
 
-const searchWord = ref('人口');
-const loading = ref(false);
+const searchWord = ref('人口推計');
+const loading = reactive({ search: false, meta: false, analysis: false });
 const error = ref('');
 const statsList = ref<any[]>([]);
+const selectedStat = ref<any>(null);
+const metaInfo = ref<any[]>([]);
+const selectedFilters = ref<any>({});
 
 const searchStats = async () => {
   if (!searchWord.value) return;
-  loading.value = true;
+  resetSelection();
+  loading.search = true;
   error.value = '';
-  statsList.value = [];
   try {
     const response = await fetch(`/api/search-stats?searchWord=${encodeURIComponent(searchWord.value)}`);
     const data = await response.json();
-    if (response.ok) {
-      statsList.value = Array.isArray(data) ? data : [data];
-    } else {
-      throw new Error(data.error || '検索に失敗しました。');
-    }
+    if (!response.ok) throw new Error(data.error || '検索に失敗しました。');
+    statsList.value = Array.isArray(data) ? data : [data];
   } catch (e: any) {
-    error.value = `通信エラーが発生しました: ${e.message}`;
+    error.value = e.message;
   } finally {
-    loading.value = false;
+    loading.search = false;
   }
 };
 
-const selectStat = (stat: any) => {
-  // TODO: 次のステップで、選択された統計表のメタデータを取得し、
-  // さらに詳細な分析項目（年齢など）を選択させるUIを実装します。
-  alert(`統計表「${stat.TITLE.$}」が選択されました。\nID: ${stat['@id']}\n\n次のステップで、このデータを分析する機能を実装します。`);
+const selectStat = async (stat: any) => {
+  selectedStat.value = stat;
+  loading.meta = true;
+  error.value = '';
+  metaInfo.value = [];
+  try {
+    const response = await fetch(`/api/get-meta-info?statsDataId=${stat['@id']}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || '分析項目の取得に失敗しました。');
+    metaInfo.value = data.filter((m: any) => m['@id'] !== 'time'); // 時間軸は今は除外
+  } catch (e: any) {
+    error.value = e.message;
+  } finally {
+    loading.meta = false;
+  }
+};
+
+const resetSelection = () => {
+  selectedStat.value = null;
+  metaInfo.value = [];
+  selectedFilters.value = {};
+  statsList.value = [];
+};
+
+const getAnalysis = () => {
+  // TODO: 次の最終ステップで、選択されたフィルターを使って
+  // getStatsDataを呼び出し、グラフ化・AI分析する機能を実装します。
+  alert(`分析機能は次のステップで実装します。\n選択されたフィルター:\n${JSON.stringify(selectedFilters.value, null, 2)}`);
 };
 
 </script>
-
 <style>
 /* ... スタイルは一旦リセット、または既存のものを流用 ... */
 body { font-family: 'Google Sans', 'Noto Sans JP', sans-serif; margin: 0; background-color: #f8f9fa; color: #202124; }
