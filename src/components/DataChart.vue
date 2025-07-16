@@ -7,16 +7,18 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, onBeforeUnmount } from 'vue';
 import Chart from 'chart.js/auto';
-import type { ChartData } from 'chart.js';
+import type { ChartData, ChartOptions } from 'chart.js';
 
 const props = defineProps<{
   chartData: ChartData;
+  // バックエンドから渡されるオプションを受け取る
+  chartOptions?: ChartOptions; 
 }>();
 
 const chartCanvas = ref<HTMLCanvasElement | null>(null);
 let chartInstance: Chart | null = null;
 
-// A color palette for the chart datasets
+// グラフ用のカラーパレット
 const colorPalette = [
   '#1a73e8', // Blue
   '#ff6d00', // Orange
@@ -42,61 +44,51 @@ const renderChart = () => {
   if (chartCanvas.value && props.chartData) {
     const ctx = chartCanvas.value.getContext('2d');
     if (ctx) {
-      // Options for the chart, including dual-axis support
-      const options = {
+      // ★★★★★ ここからが修正点 ★★★★★
+      // デフォルトのオプション
+      const defaultOptions: ChartOptions = {
         responsive: true,
         maintainAspectRatio: false,
         interaction: {
           mode: 'index' as const,
           intersect: false,
         },
+        // 全てのY軸が常に0から始まるようにデフォルト設定
         scales: {
-          y: {
-            type: 'linear' as const,
-            display: true,
-            position: 'left' as const,
-            grid: {
-              color: '#e0e0e0',
-            },
-            ticks: {
-              color: '#333',
-            }
-          },
-          // Display the second Y-axis (y1) only if needed by any dataset
-          ...(props.chartData.datasets.some(d => (d as any).yAxisID === 'y1') && {
-            y1: {
-              type: 'linear' as const,
-              display: true,
-              position: 'right' as const,
-              grid: {
-                drawOnChartArea: false, // Only draw grid lines for the primary axis
-              },
-              ticks: {
-                color: '#333',
-              }
-            }
-          })
+          y: { beginAtZero: true },
+          y1: { beginAtZero: true }
         }
       };
 
-      // Dynamically assign colors to each dataset from the palette
+      // propsから渡されたオプションとデフォルトオプションを深くマージ
+      // これにより、バックエンドからのスケール指定と、0基点の両方が適用される
+      const finalOptions: ChartOptions = {
+        ...defaultOptions,
+        scales: {
+          ...defaultOptions.scales,
+          ...props.chartOptions?.scales,
+        }
+      };
+      // ★★★★★ ここまでが修正点 ★★★★★
+
+      // データセットの数に応じて動的に色を割り当てる
       props.chartData.datasets.forEach((dataset, index) => {
         dataset.borderColor = colorPalette[index % colorPalette.length];
         dataset.backgroundColor = colorPaletteRGBA[index % colorPaletteRGBA.length];
       });
 
       chartInstance = new Chart(ctx, {
-        // Dynamically set chart type, defaulting to 'line'
-        type: (props.chartData as any).type || 'line',
+        type: 'line',
         data: props.chartData,
-        options: options,
+        options: finalOptions,
       });
     }
   }
 };
 
 onMounted(renderChart);
-watch(() => props.chartData, renderChart, { deep: true });
+// props.chartOptionsも監視対象に追加
+watch(() => [props.chartData, props.chartOptions], renderChart, { deep: true });
 
 onBeforeUnmount(() => {
   if (chartInstance) {

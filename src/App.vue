@@ -13,18 +13,32 @@
           <div v-for="group in categoryGroups" :key="group.groupName" class="category-group">
             <h3>{{ group.groupName }}</h3>
             <div class="category-buttons">
-              <button
-                v-for="category in group.items"
-                :key="category.name"
-                @click="selectCategory(category)"
-                :class="{ 
-                  active: isSelected(category), 
-                  'first-selection': isFirstSelection(category),
-                  'second-selection': isSecondSelection(category)
-                }"
-              >
-                {{ category.name }}
-              </button>
+              <template v-for="(item, index) in group.items" :key="index">
+                <button
+                  v-if="item.type !== 'subgroup'"
+                  @click="selectCategory(item as EStatCategory)"
+                  :class="{ 
+                    'first-selection': isFirstSelection(item as EStatCategory),
+                    'second-selection': isSecondSelection(item as EStatCategory)
+                  }"
+                >
+                  {{ (item as EStatCategory).name }}
+                </button>
+                
+                <div v-else class="button-sub-group">
+                  <button
+                    v-for="subItem in (item as EStatButtonSubGroup).items"
+                    :key="subItem.name"
+                    @click="selectCategory(subItem)"
+                    :class="{ 
+                      'first-selection': isFirstSelection(subItem),
+                      'second-selection': isSecondSelection(subItem)
+                    }"
+                  >
+                    {{ subItem.name }}
+                  </button>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -32,28 +46,15 @@
         <div v-if="selectedCategories.length === 1" class="info-message">
           <p>📈 比較するデータをもう一つ選択してください。</p>
         </div>
-
         <div class="search-area" v-if="selectedCategories.length > 0">
-          <textarea
-            v-model="question"
-            placeholder="AIへの質問を入力してください..."
-            rows="3"
-            class="question-textarea"
-          ></textarea>
+          <textarea v-model="question" placeholder="AIへの質問を入力してください..." rows="3" class="question-textarea"></textarea>
           <button @click="getAnalysis" :disabled="loading || selectedCategories.length === 0">
             <span v-if="!loading">AIに質問する</span>
-            <span v-else class="loading-state">
-              <div class="loading-spinner-small"></div>
-              分析中...
-            </span>
+            <span v-else class="loading-state"><div class="loading-spinner-small"></div>分析中...</span>
           </button>
         </div>
-
         <div v-if="loading" class="loading-spinner-large"></div>
-        <div v-if="error" class="error-message">
-          <strong>エラー:</strong> {{ error }}
-        </div>
-
+        <div v-if="error" class="error-message"><strong>エラー:</strong> {{ error }}</div>
         <div v-if="analysisResult" class="results-area">
           <div class="explanation-card">
             <h2>AIによる分析と洞察</h2>
@@ -61,9 +62,11 @@
           </div>
           <div class="chart-card">
             <h2>データの可視化</h2>
+            <!-- ★★★★★ ここが修正点 ★★★★★ -->
             <DataChart 
-              v-if="analysisResult.chartData"
+              v-if="analysisResult.chartData" 
               :chart-data="analysisResult.chartData"
+              :chart-options="analysisResult.chartOptions"
             />
           </div>
         </div>
@@ -75,7 +78,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import DataChart from './components/DataChart.vue';
-import { estatCategoryGroups, type EStatCategory, type EStatCategoryGroup } from './services/estatData';
+import { estatCategoryGroups, type EStatCategory, type EStatCategoryGroup, type EStatButtonSubGroup } from './services/estatData';
 
 const categoryGroups = ref<EStatCategoryGroup[]>(estatCategoryGroups);
 const selectedCategories = ref<EStatCategory[]>([]);
@@ -84,22 +87,12 @@ const loading = ref(false);
 const error = ref('');
 const analysisResult = ref<any>(null);
 
-// ★★★★★ ここからが修正点 ★★★★★
-// 選択判定を、共有されている「id」ではなく、ユニークな「name」で行うように変更
-const isSelected = (category: EStatCategory) => {
-  return selectedCategories.value.some(c => c.name === category.name);
-};
-const isFirstSelection = (category: EStatCategory) => {
-  return selectedCategories.value[0]?.name === category.name;
-}
-const isSecondSelection = (category: EStatCategory) => {
-  return selectedCategories.value[1]?.name === category.name;
-}
+const isSelected = (category: EStatCategory) => selectedCategories.value.some(c => c.name === category.name);
+const isFirstSelection = (category: EStatCategory) => selectedCategories.value[0]?.name === category.name;
+const isSecondSelection = (category: EStatCategory) => selectedCategories.value[1]?.name === category.name;
 
-// 選択ロジックも同様に「name」で判断
 const selectCategory = (category: EStatCategory) => {
   const index = selectedCategories.value.findIndex(c => c.name === category.name);
-  
   if (index > -1) {
     selectedCategories.value.splice(index, 1);
   } else {
@@ -108,12 +101,10 @@ const selectCategory = (category: EStatCategory) => {
     }
   }
 };
-// ★★★★★ ここまでが修正点 ★★★★★
 
 watch(selectedCategories, (newSelection) => {
   analysisResult.value = null;
   error.value = '';
-
   if (newSelection.length === 1) {
     question.value = `${newSelection[0].name}の推移を教えてください。`;
   } else if (newSelection.length === 2) {
@@ -124,21 +115,11 @@ watch(selectedCategories, (newSelection) => {
   }
 }, { deep: true });
 
-
 const getAnalysis = async () => {
-  if (selectedCategories.value.length === 0) {
-    error.value = '分析する統計カテゴリを選択してください。';
-    return;
-  }
-  if (!question.value.trim()) {
-    error.value = '質問を入力してください。';
-    return;
-  }
-
+  if (selectedCategories.value.length === 0) { return; }
   loading.value = true;
   error.value = '';
   analysisResult.value = null;
-
   try {
     const response = await fetch('/api/analyze-stats', {
       method: 'POST',
@@ -148,16 +129,11 @@ const getAnalysis = async () => {
         categories: selectedCategories.value.map(c => ({
           statsDataId: c.id,
           filters: c.filters,
-          categoryInfo: {
-            name: c.name,
-            unit: c.unit,
-          }
+          categoryInfo: { name: c.name, unit: c.unit }
         }))
       }),
     });
-
     const data = await response.json();
-
     if (response.ok) {
       analysisResult.value = data;
     } else {
@@ -182,116 +158,31 @@ const getAnalysis = async () => {
   --sub-text-color: #5f6368;
   --border-color: #dadce0;
 }
-body {
-  font-family: 'Google Sans', 'Noto Sans JP', sans-serif;
-  margin: 0;
-  background-color: var(--background-color);
-  color: var(--text-color);
-}
+body { font-family: 'Google Sans', 'Noto Sans JP', sans-serif; margin: 0; background-color: var(--background-color); color: var(--text-color); }
 #app { padding: 2rem; }
 .analyst-container { max-width: 900px; margin: 0 auto; }
 .app-header { text-align: center; margin-bottom: 2.5rem; }
 .app-header h1 { font-size: 2.5rem; font-weight: 500; color: var(--primary-color); }
 .app-header p { font-size: 1.1rem; color: var(--sub-text-color); }
-
-.category-selection h2 {
-  font-size: 1.2rem;
-  text-align: center;
-  margin-bottom: 1.5rem;
-  color: var(--sub-text-color);
-}
-.category-group {
-  margin-bottom: 2rem;
-  border-top: 1px solid var(--border-color);
-  padding-top: 1.5rem;
-}
-.category-group:first-child {
-  border-top: none;
-  padding-top: 0;
-}
-.category-group h3 {
-  text-align: center;
-  font-weight: 500;
-  color: var(--sub-text-color);
-  margin-bottom: 1rem;
-}
-.category-buttons {
-  display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 1rem;
-}
-.category-buttons button {
-  padding: 0.75rem 1.5rem;
-  border: 1px solid var(--border-color);
-  border-radius: 2rem;
-  background-color: var(--card-background-color);
-  color: var(--text-color);
-  font-size: 1rem;
-  cursor: pointer;
-  transition: all 0.2s ease-in-out;
-}
-.category-buttons button:hover {
-  background-color: #f1f1f1;
-  transform: translateY(-2px);
-}
-.category-buttons button.first-selection {
-  background-color: var(--primary-color);
-  color: white;
-  border-color: var(--primary-color);
-  font-weight: 500;
-}
-.category-buttons button.second-selection {
-  background-color: var(--secondary-color);
-  color: white;
-  border-color: var(--secondary-color);
-  font-weight: 500;
-}
-.info-message {
-  text-align: center;
-  padding: 1rem;
-  background-color: #e8f0fe;
-  color: #174ea6;
-  border-radius: 8px;
-  margin-bottom: 2rem;
-}
-
-.search-area {
-  background: var(--card-background-color);
-  padding: 2rem;
-  border-radius: 16px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  margin-bottom: 2rem;
-}
-.question-textarea {
-  width: 100%;
-  padding: 1rem;
-  font-size: 1.1rem;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  box-sizing: border-box;
-  resize: vertical;
-  margin-bottom: 1rem;
-}
-.search-area button {
-  width: 100%;
-  padding: 1rem;
-  font-size: 1.1rem;
-  font-weight: 500;
-  color: white;
-  background-color: #34a853;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 0.5rem;
-}
+.category-selection h2 { font-size: 1.2rem; text-align: center; margin-bottom: 1.5rem; color: var(--sub-text-color); }
+.category-group { margin-bottom: 2rem; border-top: 1px solid var(--border-color); padding-top: 1.5rem; }
+.category-group:first-child { border-top: none; padding-top: 0; }
+.category-group h3 { text-align: center; font-weight: 500; color: var(--sub-text-color); margin-bottom: 1rem; }
+.category-buttons { display: flex; justify-content: center; flex-wrap: wrap; gap: 1rem; align-items: center; }
+.category-buttons button { padding: 0.75rem 1.5rem; border: 1px solid var(--border-color); border-radius: 2rem; background-color: var(--card-background-color); color: var(--text-color); font-size: 1rem; cursor: pointer; transition: all 0.2s ease-in-out; }
+.category-buttons button:hover { background-color: #f1f1f1; transform: translateY(-2px); }
+.category-buttons button.first-selection { background-color: var(--primary-color); color: white; border-color: var(--primary-color); font-weight: 500; }
+.category-buttons button.second-selection { background-color: var(--secondary-color); color: white; border-color: var(--secondary-color); font-weight: 500; }
+.button-sub-group { display: flex; gap: 0.5rem; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 2.5rem; }
+.button-sub-group button { border: none; box-shadow: none; }
+.button-sub-group button:hover { background-color: #f1f1f1; }
+.button-sub-group button.first-selection, .button-sub-group button.second-selection { border: none; }
+.info-message { text-align: center; padding: 1rem; background-color: #e8f0fe; color: #174ea6; border-radius: 8px; margin-bottom: 2rem; }
+.search-area { background: var(--card-background-color); padding: 2rem; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-bottom: 2rem; }
+.question-textarea { width: 100%; padding: 1rem; font-size: 1.1rem; border: 1px solid var(--border-color); border-radius: 8px; box-sizing: border-box; resize: vertical; margin-bottom: 1rem; }
+.search-area button { width: 100%; padding: 1rem; font-size: 1.1rem; font-weight: 500; color: white; background-color: #34a853; border: none; border-radius: 8px; cursor: pointer; transition: background-color 0.2s; display: flex; justify-content: center; align-items: center; gap: 0.5rem; }
 .search-area button:hover:not(:disabled) { background-color: #1e8e3e; }
 .search-area button:disabled { background-color: #a5d6a7; cursor: not-allowed; }
-
 .loading-state { display: flex; align-items: center; gap: 0.75rem; }
 .loading-spinner-small { width: 20px; height: 20px; border: 3px solid rgba(255, 255, 255, 0.3); border-radius: 50%; border-top-color: #ffffff; animation: spin 1s ease infinite; }
 .loading-spinner-large { width: 48px; height: 48px; border: 5px solid rgba(0, 0, 0, 0.1); border-radius: 50%; border-top-color: var(--primary-color); animation: spin 1s ease infinite; margin: 3rem auto; }
