@@ -2,150 +2,64 @@
   <div id="app">
     <div class="analyst-container">
       <header class="app-header">
-        <h1>福岡県 AI統計アナリスト</h1>
-        <p>福岡県の公式統計データを、AIが分かりやすく解説・可視化します。</p>
+        <h1>汎用AI統計アナリスト</h1>
+        <p>e-Statの公式統計データを、キーワードで検索し、AIが分析・可視化します。</p>
       </header>
       <main>
-        <div class="category-selection">
-          <h2>分析したい統計データを選択してください（2つまで）</h2>
-          <div v-for="group in categoryGroups" :key="group.groupName" class="category-group">
-            <h3>{{ group.groupName }}</h3>
-            <div class="category-buttons">
-              <template v-for="(item, index) in group.items" :key="index">
-                <button
-                  v-if="item.type !== 'subgroup'"
-                  @click="selectCategory(item as EStatCategory)"
-                  :class="{ 
-                    'first-selection': isFirstSelection(item as EStatCategory),
-                    'second-selection': isSecondSelection(item as EStatCategory),
-                    'special-selection': (item as EStatCategory).type === 'special' && isSelected(item as EStatCategory)
-                  }"
-                >
-                  {{ (item as EStatCategory).name }}
-                </button>
-                <div v-else class="button-sub-group">
-                   <button
-                    v-for="subItem in (item as EStatButtonSubGroup).items"
-                    :key="subItem.name"
-                    @click="selectCategory(subItem)"
-                    :class="{ 
-                      'first-selection': isFirstSelection(subItem),
-                      'second-selection': isSecondSelection(subItem)
-                    }"
-                  >
-                    {{ subItem.name }}
-                  </button>
-                </div>
-              </template>
-            </div>
+        <div class="search-box">
+          <h2>1. 分析したい統計データを検索してください</h2>
+          <div class="search-form">
+            <input 
+              v-model="searchWord" 
+              @keyup.enter="searchStats"
+              placeholder="例：人口、GDP、失業率"
+            />
+            <button @click="searchStats" :disabled="loading">
+              <span v-if="!loading">検索</span>
+              <span v-else>検索中...</span>
+            </button>
           </div>
         </div>
 
-        <div v-if="selectedCategories.length === 1 && selectedCategories[0].type !== 'special'" class="info-message">
-          <p>📈 比較するデータをもう一つ選択してください。</p>
-        </div>
-        <div class="search-area" v-if="selectedCategories.length > 0">
-          <textarea v-model="question" placeholder="AIへの質問を入力してください..." rows="3" class="question-textarea"></textarea>
-          <button @click="getAnalysis" :disabled="loading || selectedCategories.length === 0">
-            <span v-if="!loading">AIに質問する</span>
-            <span v-else class="loading-state"><div class="loading-spinner-small"></div>分析中...</span>
-          </button>
-        </div>
         <div v-if="loading" class="loading-spinner-large"></div>
         <div v-if="error" class="error-message"><strong>エラー:</strong> {{ error }}</div>
-        <div v-if="analysisResult" class="results-area">
-          <div class="explanation-card">
-            <h2>AIによる分析と洞察</h2>
-            <p>{{ analysisResult.explanation }}</p>
-          </div>
-          <div class="chart-card">
-            <h2>データの可視化</h2>
-            <DataChart 
-              v-if="analysisResult.chartData" 
-              :chart-data="analysisResult.chartData"
-            />
-          </div>
+
+        <div v-if="statsList.length > 0" class="results-list">
+          <h2>2. 分析する統計表を選択してください</h2>
+          <ul>
+            <li v-for="stat in statsList" :key="stat['@id']">
+              <button class="stat-select-button" @click="selectStat(stat)">
+                {{ stat.STATISTICS_NAME }} / {{ stat.TITLE.$ }}
+              </button>
+            </li>
+          </ul>
         </div>
-      </main>
+        </main>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
-import DataChart from './components/DataChart.vue';
-import { estatCategoryGroups, type EStatCategory, type EStatCategoryGroup, type EStatButtonSubGroup } from './services/estatData';
+import { ref } from 'vue';
+// import DataChart from './components/DataChart.vue'; // 次のステップで利用
 
-const categoryGroups = ref<EStatCategoryGroup[]>(estatCategoryGroups);
-const selectedCategories = ref<EStatCategory[]>([]);
-const question = ref('');
+const searchWord = ref('人口');
 const loading = ref(false);
 const error = ref('');
-const analysisResult = ref<any>(null);
+const statsList = ref<any[]>([]);
 
-const isSelected = (category: EStatCategory) => selectedCategories.value.some(c => c.id === category.id);
-const isFirstSelection = (category: EStatCategory) => selectedCategories.value[0]?.id === category.id;
-const isSecondSelection = (category: EStatCategory) => selectedCategories.value[1]?.id === category.id;
-
-const selectCategory = (category: EStatCategory) => {
-  if (category.type === 'special') {
-    if (isSelected(category)) {
-      selectedCategories.value = [];
-    } else {
-      selectedCategories.value = [category];
-    }
-    return;
-  }
-  const index = selectedCategories.value.findIndex(c => c.id === category.id);
-  if (index > -1) {
-    selectedCategories.value.splice(index, 1);
-  } else {
-    if (selectedCategories.value.some(c => c.type === 'special')) {
-      selectedCategories.value = [];
-    }
-    if (selectedCategories.value.length < 2) {
-      selectedCategories.value.push(category);
-    }
-  }
-};
-
-watch(selectedCategories, (newSelection) => {
-  analysisResult.value = null;
-  error.value = '';
-  if (newSelection.length === 1) {
-    if (newSelection[0].type === 'special') {
-      question.value = `福岡県の年齢階級別人口（年少、生産年齢、老年）の推移と、それらの関係について解説してください。`;
-      getAnalysis();
-    } else {
-      question.value = `${newSelection[0].name}の推移を教えてください。`;
-    }
-  } else if (newSelection.length === 2) {
-    question.value = `${newSelection[0].name}と${newSelection[1].name}には、どのような関係がありますか？`;
-    getAnalysis();
-  } else {
-    question.value = '';
-  }
-}, { deep: true });
-
-const getAnalysis = async () => {
-  if (selectedCategories.value.length === 0) return;
+const searchStats = async () => {
+  if (!searchWord.value) return;
   loading.value = true;
   error.value = '';
-  analysisResult.value = null;
+  statsList.value = [];
   try {
-    const response = await fetch('/api/analyze-stats', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        question: question.value,
-        categories: selectedCategories.value,
-      }),
-    });
+    const response = await fetch(`/api/search-stats?searchWord=${encodeURIComponent(searchWord.value)}`);
     const data = await response.json();
     if (response.ok) {
-      analysisResult.value = data;
+      statsList.value = Array.isArray(data) ? data : [data];
     } else {
-      error.value = data.error || '分析に失敗しました。';
+      throw new Error(data.error || '検索に失敗しました。');
     }
   } catch (e: any) {
     error.value = `通信エラーが発生しました: ${e.message}`;
@@ -153,53 +67,40 @@ const getAnalysis = async () => {
     loading.value = false;
   }
 };
+
+const selectStat = (stat: any) => {
+  // TODO: 次のステップで、選択された統計表のメタデータを取得し、
+  // さらに詳細な分析項目（年齢など）を選択させるUIを実装します。
+  alert(`統計表「${stat.TITLE.$}」が選択されました。\nID: ${stat['@id']}\n\n次のステップで、このデータを分析する機能を実装します。`);
+};
+
 </script>
 
 <style>
-/* CSSの変更はなし。区別のため special-selection を追加 */
-:root {
-  --primary-color: #1a73e8;
-  --secondary-color: #ff6d00;
-  --special-color: #9c27b0; /* 紫 */
-  --background-color: #f8f9fa;
-  --card-background-color: #ffffff;
-  --text-color: #202124;
-  --sub-text-color: #5f6368;
-  --border-color: #dadce0;
-}
-body { font-family: 'Google Sans', 'Noto Sans JP', sans-serif; margin: 0; background-color: var(--background-color); color: var(--text-color); }
+/* ... スタイルは一旦リセット、または既存のものを流用 ... */
+body { font-family: 'Google Sans', 'Noto Sans JP', sans-serif; margin: 0; background-color: #f8f9fa; color: #202124; }
 #app { padding: 2rem; }
 .analyst-container { max-width: 900px; margin: 0 auto; }
 .app-header { text-align: center; margin-bottom: 2.5rem; }
-.app-header h1 { font-size: 2.5rem; font-weight: 500; color: var(--primary-color); }
-.app-header p { font-size: 1.1rem; color: var(--sub-text-color); }
-.category-selection h2 { font-size: 1.2rem; text-align: center; margin-bottom: 1.5rem; color: var(--sub-text-color); }
-.category-group { margin-bottom: 2rem; border-top: 1px solid var(--border-color); padding-top: 1.5rem; }
-.category-group:first-child { border-top: none; padding-top: 0; }
-.category-group h3 { text-align: center; font-weight: 500; color: var(--sub-text-color); margin-bottom: 1rem; }
-.category-buttons { display: flex; justify-content: center; flex-wrap: wrap; gap: 1rem; align-items: center; }
-.category-buttons button { padding: 0.75rem 1.5rem; border: 1px solid var(--border-color); border-radius: 2rem; background-color: var(--card-background-color); color: var(--text-color); font-size: 1rem; cursor: pointer; transition: all 0.2s ease-in-out; }
-.category-buttons button:hover { background-color: #f1f1f1; transform: translateY(-2px); }
-.category-buttons button.first-selection { background-color: var(--primary-color); color: white; border-color: var(--primary-color); font-weight: 500; }
-.category-buttons button.second-selection { background-color: var(--secondary-color); color: white; border-color: var(--secondary-color); font-weight: 500; }
-.category-buttons button.special-selection { background-color: var(--special-color); color: white; border-color: var(--special-color); font-weight: 500; }
-.button-sub-group { display: flex; gap: 0.5rem; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 2.5rem; }
-.button-sub-group button { border: none; box-shadow: none; }
-.button-sub-group button:hover { background-color: #f1f1f1; }
-.button-sub-group button.first-selection, .button-sub-group button.second-selection { border: none; }
-.info-message { text-align: center; padding: 1rem; background-color: #e8f0fe; color: #174ea6; border-radius: 8px; margin-bottom: 2rem; }
-.search-area { background: var(--card-background-color); padding: 2rem; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-bottom: 2rem; }
-.question-textarea { width: 100%; padding: 1rem; font-size: 1.1rem; border: 1px solid var(--border-color); border-radius: 8px; box-sizing: border-box; resize: vertical; margin-bottom: 1rem; }
-.search-area button { width: 100%; padding: 1rem; font-size: 1.1rem; font-weight: 500; color: white; background-color: #34a853; border: none; border-radius: 8px; cursor: pointer; transition: background-color 0.2s; display: flex; justify-content: center; align-items: center; gap: 0.5rem; }
-.search-area button:hover:not(:disabled) { background-color: #1e8e3e; }
-.search-area button:disabled { background-color: #a5d6a7; cursor: not-allowed; }
-.loading-state { display: flex; align-items: center; gap: 0.75rem; }
-.loading-spinner-small { width: 20px; height: 20px; border: 3px solid rgba(255, 255, 255, 0.3); border-radius: 50%; border-top-color: #ffffff; animation: spin 1s ease infinite; }
-.loading-spinner-large { width: 48px; height: 48px; border: 5px solid rgba(0, 0, 0, 0.1); border-radius: 50%; border-top-color: var(--primary-color); animation: spin 1s ease infinite; margin: 3rem auto; }
+.app-header h1 { font-size: 2.5rem; font-weight: 500; color: #1a73e8; }
+.app-header p { font-size: 1.1rem; color: #5f6368; }
+
+.search-box { background: #fff; padding: 2rem; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-bottom: 2rem; }
+.search-box h2 { margin-top: 0; font-size: 1.5rem; font-weight: 500; border-bottom: 2px solid #1a73e8; padding-bottom: 0.5rem; margin-bottom: 1.5rem; }
+.search-form { display: flex; gap: 1rem; }
+.search-form input { flex-grow: 1; padding: 1rem; font-size: 1.1rem; border: 1px solid #dadce0; border-radius: 8px; }
+.search-form button { padding: 1rem 2rem; font-size: 1.1rem; font-weight: 500; color: white; background-color: #34a853; border: none; border-radius: 8px; cursor: pointer; transition: background-color 0.2s; }
+.search-form button:hover:not(:disabled) { background-color: #1e8e3e; }
+.search-form button:disabled { background-color: #a5d6a7; cursor: not-allowed; }
+
+.results-list { background: #fff; padding: 2rem; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+.results-list h2 { margin-top: 0; font-size: 1.5rem; font-weight: 500; border-bottom: 2px solid #1a73e8; padding-bottom: 0.5rem; margin-bottom: 1.5rem; }
+.results-list ul { list-style: none; padding: 0; margin: 0; }
+.results-list li { margin-bottom: 1rem; }
+.stat-select-button { width: 100%; padding: 1rem; text-align: left; background-color: #f8f9fa; border: 1px solid #dadce0; border-radius: 8px; cursor: pointer; font-size: 1rem; transition: background-color 0.2s, transform 0.2s; }
+.stat-select-button:hover { background-color: #e8f0fe; transform: translateY(-2px); }
+
+.loading-spinner-large { width: 48px; height: 48px; border: 5px solid rgba(0, 0, 0, 0.1); border-radius: 50%; border-top-color: #1a73e8; animation: spin 1s ease infinite; margin: 3rem auto; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .error-message { margin-top: 1.5rem; padding: 1rem; background-color: #fdeaed; color: #a50e0e; border: 1px solid #f4c7c7; border-radius: 8px; }
-.results-area { display: grid; grid-template-columns: 1fr; gap: 2rem; }
-.explanation-card, .chart-card { background: var(--card-background-color); padding: 2rem; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-.explanation-card h2, .chart-card h2 { margin-top: 0; font-size: 1.5rem; font-weight: 500; border-bottom: 2px solid var(--primary-color); padding-bottom: 0.5rem; margin-bottom: 1.5rem; }
-.explanation-card p { line-height: 1.8; font-size: 1.1rem; }
 </style>
