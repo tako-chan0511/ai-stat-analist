@@ -5,11 +5,9 @@
         <h1>福岡県 AI統計アナリスト</h1>
         <p>福岡県の公式統計データを、AIが分かりやすく解説・可視化します。</p>
       </header>
-
       <main>
         <div class="category-selection">
           <h2>分析したい統計データを選択してください（2つまで）</h2>
-          
           <div v-for="group in categoryGroups" :key="group.groupName" class="category-group">
             <h3>{{ group.groupName }}</h3>
             <div class="category-buttons">
@@ -19,14 +17,14 @@
                   @click="selectCategory(item as EStatCategory)"
                   :class="{ 
                     'first-selection': isFirstSelection(item as EStatCategory),
-                    'second-selection': isSecondSelection(item as EStatCategory)
+                    'second-selection': isSecondSelection(item as EStatCategory),
+                    'special-selection': (item as EStatCategory).type === 'special' && isSelected(item as EStatCategory)
                   }"
                 >
                   {{ (item as EStatCategory).name }}
                 </button>
-                
                 <div v-else class="button-sub-group">
-                  <button
+                   <button
                     v-for="subItem in (item as EStatButtonSubGroup).items"
                     :key="subItem.name"
                     @click="selectCategory(subItem)"
@@ -43,7 +41,7 @@
           </div>
         </div>
 
-        <div v-if="selectedCategories.length === 1" class="info-message">
+        <div v-if="selectedCategories.length === 1 && selectedCategories[0].type !== 'special'" class="info-message">
           <p>📈 比較するデータをもう一つ選択してください。</p>
         </div>
         <div class="search-area" v-if="selectedCategories.length > 0">
@@ -62,11 +60,9 @@
           </div>
           <div class="chart-card">
             <h2>データの可視化</h2>
-            <!-- ★★★★★ ここが修正点 ★★★★★ -->
             <DataChart 
               v-if="analysisResult.chartData" 
               :chart-data="analysisResult.chartData"
-              :chart-options="analysisResult.chartOptions"
             />
           </div>
         </div>
@@ -87,15 +83,26 @@ const loading = ref(false);
 const error = ref('');
 const analysisResult = ref<any>(null);
 
-const isSelected = (category: EStatCategory) => selectedCategories.value.some(c => c.name === category.name);
-const isFirstSelection = (category: EStatCategory) => selectedCategories.value[0]?.name === category.name;
-const isSecondSelection = (category: EStatCategory) => selectedCategories.value[1]?.name === category.name;
+const isSelected = (category: EStatCategory) => selectedCategories.value.some(c => c.id === category.id);
+const isFirstSelection = (category: EStatCategory) => selectedCategories.value[0]?.id === category.id;
+const isSecondSelection = (category: EStatCategory) => selectedCategories.value[1]?.id === category.id;
 
 const selectCategory = (category: EStatCategory) => {
-  const index = selectedCategories.value.findIndex(c => c.name === category.name);
+  if (category.type === 'special') {
+    if (isSelected(category)) {
+      selectedCategories.value = [];
+    } else {
+      selectedCategories.value = [category];
+    }
+    return;
+  }
+  const index = selectedCategories.value.findIndex(c => c.id === category.id);
   if (index > -1) {
     selectedCategories.value.splice(index, 1);
   } else {
+    if (selectedCategories.value.some(c => c.type === 'special')) {
+      selectedCategories.value = [];
+    }
     if (selectedCategories.value.length < 2) {
       selectedCategories.value.push(category);
     }
@@ -106,7 +113,12 @@ watch(selectedCategories, (newSelection) => {
   analysisResult.value = null;
   error.value = '';
   if (newSelection.length === 1) {
-    question.value = `${newSelection[0].name}の推移を教えてください。`;
+    if (newSelection[0].type === 'special') {
+      question.value = `福岡県の年齢階級別人口（年少、生産年齢、老年）の推移と、それらの関係について解説してください。`;
+      getAnalysis();
+    } else {
+      question.value = `${newSelection[0].name}の推移を教えてください。`;
+    }
   } else if (newSelection.length === 2) {
     question.value = `${newSelection[0].name}と${newSelection[1].name}には、どのような関係がありますか？`;
     getAnalysis();
@@ -116,7 +128,7 @@ watch(selectedCategories, (newSelection) => {
 }, { deep: true });
 
 const getAnalysis = async () => {
-  if (selectedCategories.value.length === 0) { return; }
+  if (selectedCategories.value.length === 0) return;
   loading.value = true;
   error.value = '';
   analysisResult.value = null;
@@ -126,11 +138,7 @@ const getAnalysis = async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
         question: question.value,
-        categories: selectedCategories.value.map(c => ({
-          statsDataId: c.id,
-          filters: c.filters,
-          categoryInfo: { name: c.name, unit: c.unit }
-        }))
+        categories: selectedCategories.value,
       }),
     });
     const data = await response.json();
@@ -148,10 +156,11 @@ const getAnalysis = async () => {
 </script>
 
 <style>
-/* スタイルは変更なし */
+/* CSSの変更はなし。区別のため special-selection を追加 */
 :root {
   --primary-color: #1a73e8;
   --secondary-color: #ff6d00;
+  --special-color: #9c27b0; /* 紫 */
   --background-color: #f8f9fa;
   --card-background-color: #ffffff;
   --text-color: #202124;
@@ -173,6 +182,7 @@ body { font-family: 'Google Sans', 'Noto Sans JP', sans-serif; margin: 0; backgr
 .category-buttons button:hover { background-color: #f1f1f1; transform: translateY(-2px); }
 .category-buttons button.first-selection { background-color: var(--primary-color); color: white; border-color: var(--primary-color); font-weight: 500; }
 .category-buttons button.second-selection { background-color: var(--secondary-color); color: white; border-color: var(--secondary-color); font-weight: 500; }
+.category-buttons button.special-selection { background-color: var(--special-color); color: white; border-color: var(--special-color); font-weight: 500; }
 .button-sub-group { display: flex; gap: 0.5rem; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 2.5rem; }
 .button-sub-group button { border: none; box-shadow: none; }
 .button-sub-group button:hover { background-color: #f1f1f1; }
