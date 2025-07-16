@@ -11,8 +11,6 @@ import type { ChartData, ChartOptions } from 'chart.js';
 
 const props = defineProps<{
   chartData: ChartData;
-  // バックエンドから渡されるオプションを受け取る
-  chartOptions?: ChartOptions; 
 }>();
 
 const chartCanvas = ref<HTMLCanvasElement | null>(null);
@@ -45,28 +43,32 @@ const renderChart = () => {
     const ctx = chartCanvas.value.getContext('2d');
     if (ctx) {
       // ★★★★★ ここからが修正点 ★★★★★
-      // デフォルトのオプション
-      const defaultOptions: ChartOptions = {
+      const options: ChartOptions = {
         responsive: true,
         maintainAspectRatio: false,
         interaction: {
           mode: 'index' as const,
           intersect: false,
         },
-        // 全てのY軸が常に0から始まるようにデフォルト設定
         scales: {
-          y: { beginAtZero: true },
-          y1: { beginAtZero: true }
-        }
-      };
-
-      // propsから渡されたオプションとデフォルトオプションを深くマージ
-      // これにより、バックエンドからのスケール指定と、0基点の両方が適用される
-      const finalOptions: ChartOptions = {
-        ...defaultOptions,
-        scales: {
-          ...defaultOptions.scales,
-          ...props.chartOptions?.scales,
+          y: {
+            type: 'linear' as const,
+            display: true,
+            position: 'left' as const,
+            beginAtZero: true, // Y軸を常に0から始める
+          },
+          // 第2Y軸（y1）が必要な場合のみ表示
+          ...(props.chartData.datasets.some(d => (d as any).yAxisID === 'y1') && {
+            y1: {
+              type: 'linear' as const,
+              display: true,
+              position: 'right' as const,
+              grid: {
+                drawOnChartArea: false, 
+              },
+              beginAtZero: true, // 第2Y軸も常に0から始める
+            }
+          })
         }
       };
       // ★★★★★ ここまでが修正点 ★★★★★
@@ -80,15 +82,14 @@ const renderChart = () => {
       chartInstance = new Chart(ctx, {
         type: 'line',
         data: props.chartData,
-        options: finalOptions,
+        options: options,
       });
     }
   }
 };
 
 onMounted(renderChart);
-// props.chartOptionsも監視対象に追加
-watch(() => [props.chartData, props.chartOptions], renderChart, { deep: true });
+watch(() => props.chartData, renderChart, { deep: true });
 
 onBeforeUnmount(() => {
   if (chartInstance) {
