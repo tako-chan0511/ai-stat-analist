@@ -20,7 +20,7 @@ interface ProcessedDataset {
 const ALL_AGE_CATEGORIES: AnalysisRequest[] = [
   { id: 'young-population', name: '年少人口 (0-14歳)', unit: '人', statsDataId: '0000010101', code: 'A1301' },
   { id: 'working-age-population', name: '生産年齢人口 (15-64歳)', unit: '人', statsDataId: '0000010101', code: 'A1302' },
-  { id: 'elderly-population', name: '老年人口 (65歳以上)', unit: '人', statsDataId: '0000010101', code: 'A1401' },
+  { id: 'elderly-population', name: '老年人口 (65歳以上)', unit: '人', statsDataId: '0000010101', code: 'A1303' },
 ];
 
 async function fetchEstatData(appId: string, req: AnalysisRequest): Promise<ProcessedDataset> {
