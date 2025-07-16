@@ -16,7 +16,7 @@
           </div>
         </div>
 
-        <div v-if="loading.search" class="loading-spinner-large"></div>
+        <div v-if="loading.search || loading.meta || loading.analysis" class="loading-spinner-large"></div>
         <div v-if="error" class="error-message"><strong>エラー:</strong> {{ error }}</div>
 
         <div v-if="statsList.length > 0 && !selectedStat" class="results-list">
@@ -45,24 +45,40 @@
           
           <div class="action-buttons">
             <button @click="resetSelection">戻る</button>
-            <button class="primary" @click="getAnalysis">この内容で分析する</button>
+            <button class="primary" @click="getAnalysis" :disabled="loading.analysis">この内容で分析する</button>
           </div>
         </div>
-        </main>
+
+        <div v-if="analysisResult" class="results-area">
+          <div class="explanation-card">
+            <h2>AIによる分析と洞察</h2>
+            <p>{{ analysisResult.explanation }}</p>
+          </div>
+          <div class="chart-card">
+            <h2>データの可視化</h2>
+            <DataChart 
+              v-if="analysisResult.chartData" 
+              :chart-data="analysisResult.chartData"
+            />
+          </div>
+        </div>
+      </main>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive } from 'vue';
+import DataChart from './components/DataChart.vue';
 
-const searchWord = ref('人口推計');
+const searchWord = ref('人口推計 都道府県');
 const loading = reactive({ search: false, meta: false, analysis: false });
 const error = ref('');
 const statsList = ref<any[]>([]);
 const selectedStat = ref<any>(null);
 const metaInfo = ref<any[]>([]);
 const selectedFilters = ref<any>({});
+const analysisResult = ref<any>(null);
 
 const searchStats = async () => {
   if (!searchWord.value) return;
@@ -90,7 +106,16 @@ const selectStat = async (stat: any) => {
     const response = await fetch(`/api/get-meta-info?statsDataId=${stat['@id']}`);
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || '分析項目の取得に失敗しました。');
-    metaInfo.value = data.filter((m: any) => m['@id'] !== 'time'); // 時間軸は今は除外
+    // 絞り込み可能なカテゴリ(cat01, cat02など)と地域(area)だけを抽出
+    metaInfo.value = data.filter((m: any) => m['@id'].startsWith('cat') || m['@id'] === 'area');
+    // 各フィルターの初期値を設定
+    selectedFilters.value = {};
+    metaInfo.value.forEach(meta => {
+      const firstOption = Array.isArray(meta.CLASS) ? meta.CLASS[0] : meta.CLASS;
+      if(firstOption) {
+        selectedFilters.value[meta['@id']] = firstOption['@code'];
+      }
+    });
   } catch (e: any) {
     error.value = e.message;
   } finally {
@@ -99,19 +124,49 @@ const selectStat = async (stat: any) => {
 };
 
 const resetSelection = () => {
+  statsList.value = [];
   selectedStat.value = null;
   metaInfo.value = [];
   selectedFilters.value = {};
-  statsList.value = [];
+  analysisResult.value = null;
+  error.value = '';
 };
 
-const getAnalysis = () => {
-  // TODO: 次の最終ステップで、選択されたフィルターを使って
-  // getStatsDataを呼び出し、グラフ化・AI分析する機能を実装します。
-  alert(`分析機能は次のステップで実装します。\n選択されたフィルター:\n${JSON.stringify(selectedFilters.value, null, 2)}`);
-};
+const getAnalysis = async () => {
+  loading.analysis = true;
+  error.value = '';
+  analysisResult.value = null;
+  try {
+    // 選択されたフィルターの人間が読める名前もバックエンドに送る
+    const filterNames = Object.fromEntries(
+      Object.entries(selectedFilters.value).map(([key, value]) => {
+        const meta = metaInfo.value.find(m => m['@id'] === key);
+        if (!meta) return [key, value];
+        const option = (Array.isArray(meta.CLASS) ? meta.CLASS : [meta.CLASS]).find((c: any) => c['@code'] === value);
+        return [key, option ? option['@name'] : value];
+      })
+    );
 
+    const response = await fetch('/api/analyze-stats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        statsDataId: selectedStat.value['@id'],
+        filters: selectedFilters.value,
+        filterNames,
+      })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || '分析に失敗しました。');
+    analysisResult.value = data;
+  } catch (e: any) {
+    error.value = e.message;
+  } finally {
+    loading.analysis = false;
+  }
+};
 </script>
+
 <style>
 /* ... スタイルは一旦リセット、または既存のものを流用 ... */
 body { font-family: 'Google Sans', 'Noto Sans JP', sans-serif; margin: 0; background-color: #f8f9fa; color: #202124; }
@@ -120,7 +175,21 @@ body { font-family: 'Google Sans', 'Noto Sans JP', sans-serif; margin: 0; backgr
 .app-header { text-align: center; margin-bottom: 2.5rem; }
 .app-header h1 { font-size: 2.5rem; font-weight: 500; color: #1a73e8; }
 .app-header p { font-size: 1.1rem; color: #5f6368; }
-
+.action-buttons button.primary { 
+  color: white; 
+  /* 検索ボタンと同じ緑色に設定 */
+  background-color: #34a853; 
+  border: 1px solid #34a853; 
+}
+/* ★★★ 「戻る」ボタン用のスタイルを追加 ★★★ */
+.action-buttons button:not(.primary) {
+  background-color: #f1f3f4;
+  border: 1px solid #dadce0;
+  color: #3c4043;
+}
+.action-buttons button.primary:hover:not(:disabled) { 
+  background-color: #1e8e3e; 
+}
 .search-box { background: #fff; padding: 2rem; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-bottom: 2rem; }
 .search-box h2 { margin-top: 0; font-size: 1.5rem; font-weight: 500; border-bottom: 2px solid #1a73e8; padding-bottom: 0.5rem; margin-bottom: 1.5rem; }
 .search-form { display: flex; gap: 1rem; }

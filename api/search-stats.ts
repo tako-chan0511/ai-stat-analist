@@ -16,7 +16,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       appId: eStatAppId,
       lang: 'J',
       searchWord: searchWord,
-      limit: '10', // まずは10件に制限
+      limit: '20', // 少し多めに取得
     });
 
     const eStatUrl = `https://api.e-stat.go.jp/rest/3.0/app/json/getStatsList?${params.toString()}`;
@@ -31,14 +31,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const result = data.GET_STATS_LIST.RESULT;
 
     if (result.STATUS !== 0) {
-      // 該当データなしの場合も正常なレスポンスとして空の配列を返す
       if (result.ERROR_MSG.includes('該当するデータは存在しません')) {
         return res.status(200).json([]);
       }
       throw new Error(`e-Stat API returned an error: ${result.ERROR_MSG}`);
     }
     
-    const tableList = data.GET_STATS_LIST.DATALIST_INF.TABLE_INF;
+    let tableList = data.GET_STATS_LIST.DATALIST_INF.TABLE_INF;
+    if (!Array.isArray(tableList)) {
+      tableList = [tableList];
+    }
+    
+    // ★★★ ここで日付の新しい順にソート ★★★
+    tableList.sort((a: any, b: any) => {
+      const dateA = new Date(a['@releaseDate']).getTime();
+      const dateB = new Date(b['@releaseDate']).getTime();
+      return dateB - dateA; // 降順ソート
+    });
+
     res.status(200).json(tableList);
 
   } catch (error: any) {
