@@ -225,21 +225,13 @@ const getAnalysis = async (isFollowUp: boolean) => {
     analysisResult.value = null;
   }
 
-  // ★★★ ここからが修正箇所 ★★★
-  let keyToSend = savedApiKey.value;
-
-  // Viteが提供するモード変数で、開発環境('development')か本番環境('production')かを判断
-  if (import.meta.env.MODE === 'development' && !keyToSend) {
-    // 開発環境で、かつUIからキー入力がない場合のみ、開発者用のキーをフォールバックとして使う
-    keyToSend = import.meta.env.VITE_GEMINI_API_KEY;
-  }
+  const keyToSend = savedApiKey.value || import.meta.env.VITE_GEMINI_API_KEY;
 
   if (!keyToSend) {
     error.value = 'Gemini APIキーが設定されていません。右上の歯車アイコンから設定してください。';
     loading.analysis = false;
     return;
   }
-  // ★★★ ここまでが修正箇所 ★★★
 
   try {
     const analyses = [{ filters: filters1.value, filterNames: getFilterNames(filters1.value) }];
@@ -320,7 +312,6 @@ const saveApiKey = () => {
   alert('APIキーを保存しました。');
 };
 </script>
-
 
 <style>
 /* スタイルは変更ありません */
