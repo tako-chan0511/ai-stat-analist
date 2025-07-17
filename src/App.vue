@@ -4,6 +4,9 @@
       <header class="app-header">
         <h1>汎用AI統計アナリスト</h1>
         <p>e-Statの公式統計データを、キーワードで検索し、AIが分析・可視化します。</p>
+        <div class="settings-trigger" @click="showSettings = true" title="APIキー設定">
+          ⚙️
+        </div>
       </header>
       <main>
         <div class="search-box" v-if="uiState === 'search'">
@@ -33,7 +36,7 @@
             </li>
           </ul>
            <div class="action-buttons">
-            <button @click="resetToSearch">検索に戻る</button>
+            <button @click="backToState('search')">検索に戻る</button>
           </div>
         </div>
         
@@ -72,7 +75,7 @@
           
           <div class="action-buttons">
             <button @click="backToState('list')">表の選択に戻る</button>
-            <button class="primary" @click="getAnalysis" :disabled="loading.analysis">この内容で分析する</button>
+            <button class="primary" @click="getAnalysis(false)" :disabled="loading.analysis">この内容で分析する</button>
           </div>
         </div>
 
@@ -86,7 +89,7 @@
              <h2>さらに質問（分析の深掘り）</h2>
              <div class="search-form">
                <textarea v-model="followUpQuestion" placeholder="現在のデータについて、さらに質問を入力してください..." rows="3"></textarea>
-               <button class="primary" @click="getAnalysis" :disabled="loading.analysis">
+               <button class="primary" @click="getAnalysis(true)" :disabled="loading.analysis">
                  <span v-if="!loading.analysis">追加で質問する</span><span v-else>分析中...</span>
                </button>
              </div>
@@ -106,11 +109,30 @@
         </div>
       </main>
     </div>
+
+    <div v-if="showSettings" class="modal-overlay" @click.self="showSettings = false">
+      <div class="modal-content">
+        <h2>設定</h2>
+        <div class="setting-item">
+          <label for="api-key-input">Gemini APIキー</label>
+          <p class="description">
+            AIによる分析機能を利用するには、ご自身のGoogle AI Gemini APIキーが必要です。
+            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">こちら</a>
+            から取得できます。
+          </p>
+          <input id="api-key-input" type="password" v-model="userApiKeyInput" placeholder="ご自身のAPIキーを入力してください" />
+        </div>
+        <div class="modal-actions">
+          <button @click="showSettings = false">キャンセル</button>
+          <button class="primary" @click="saveApiKey">保存</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import DataChart from './components/DataChart.vue';
 
 type UIState = 'search' | 'list' | 'config' | 'result';
@@ -127,6 +149,17 @@ const filters2 = ref<any>({});
 const isComparing = ref(false);
 const analysisResult = ref<any>(null);
 const followUpQuestion = ref('');
+const showSettings = ref(false);
+const userApiKeyInput = ref('');
+const savedApiKey = ref('');
+
+onMounted(() => {
+  const storedKey = localStorage.getItem('geminiApiKey');
+  if (storedKey) {
+    savedApiKey.value = storedKey;
+    userApiKeyInput.value = storedKey;
+  }
+});
 
 const isAnyLoading = computed(() => loading.search || loading.meta || loading.analysis);
 
@@ -185,9 +218,21 @@ const selectStat = async (stat: any) => {
   }
 };
 
-const getAnalysis = async () => {
+const getAnalysis = async (isFollowUp: boolean) => {
   loading.analysis = true;
   error.value = '';
+  if (!isFollowUp) {
+    analysisResult.value = null;
+  }
+
+  const keyToSend = savedApiKey.value || import.meta.env.VITE_GEMINI_API_KEY;
+
+  if (!keyToSend) {
+    error.value = 'Gemini APIキーが設定されていません。右上の歯車アイコンから設定するか、.env.localファイルを確認してください。';
+    loading.analysis = false;
+    return;
+  }
+
   try {
     const analyses = [{ filters: filters1.value, filterNames: getFilterNames(filters1.value) }];
     if (isComparing.value) {
@@ -195,7 +240,7 @@ const getAnalysis = async () => {
     }
 
     let question = followUpQuestion.value;
-    if (!question) {
+    if (!question || !isFollowUp) {
       const itemNames = analyses.map(a => Object.values(a.filterNames).join(' '));
       question = `以下の統計データ「${itemNames.join('」と「')}」について、それらの関係性、傾向、背景にある社会的・経済的要因を分析・解説してください。`;
     }
@@ -206,15 +251,15 @@ const getAnalysis = async () => {
       body: JSON.stringify({
         statsDataId: selectedStat.value['@id'],
         analyses: analyses,
-        question: question
+        question: question,
+        geminiApiKey: keyToSend 
       })
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || '分析に失敗しました。');
     
-    if (uiState.value === 'result' && analysisResult.value && followUpQuestion.value) {
+    if (isFollowUp && analysisResult.value) {
       analysisResult.value.explanation += `\n\n--- (追加の質問への回答) ---\n${data.explanation}`;
-      analysisResult.value.chartData = data.chartData;
     } else {
       analysisResult.value = data;
     }
@@ -260,6 +305,13 @@ const removeComparison = () => {
   isComparing.value = false;
   filters2.value = {};
 };
+
+const saveApiKey = () => {
+  savedApiKey.value = userApiKeyInput.value;
+  localStorage.setItem('geminiApiKey', userApiKeyInput.value);
+  showSettings.value = false;
+  alert('APIキーを保存しました。');
+};
 </script>
 
 <style>
@@ -267,7 +319,7 @@ const removeComparison = () => {
 body { font-family: 'Google Sans', 'Noto Sans JP', sans-serif; margin: 0; background-color: #f8f9fa; color: #202124; }
 #app { padding: 2rem; }
 .analyst-container { max-width: 900px; margin: 0 auto; }
-.app-header { text-align: center; margin-bottom: 2.5rem; }
+.app-header { text-align: center; margin-bottom: 2.5rem; position: relative; }
 .app-header h1 { font-size: 2.5rem; font-weight: 500; color: #1a73e8; }
 .app-header p { font-size: 1.1rem; color: #5f6368; }
 .search-box, .results-list, .config-box, .results-area { background: #fff; padding: 2rem; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-bottom: 2rem; }
@@ -308,4 +360,12 @@ h2 { margin-top: 0; font-size: 1.5rem; font-weight: 500; border-bottom: 2px soli
 .explanation-card p { line-height: 1.8; font-size: 1.1rem; white-space: pre-wrap; }
 .follow-up-box { border-top: 1px solid #dadce0; margin-top: 1rem; padding-top: 2rem; }
 .follow-up-box h2 { border: none; font-size: 1.2rem; text-align: center; margin-bottom: 1rem; }
+.settings-trigger { position: absolute; top: 1rem; right: 1rem; font-size: 1.5rem; cursor: pointer; opacity: 0.6; transition: opacity 0.2s; }
+.settings-trigger:hover { opacity: 1; }
+.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+.modal-content { background: white; padding: 2rem; border-radius: 16px; width: 90%; max-width: 500px; }
+.setting-item label { font-weight: 500; font-size: 1.2rem; }
+.setting-item .description { font-size: 0.9rem; color: #5f6368; margin-top: 0.5rem; margin-bottom: 1rem; }
+.setting-item input { width: 100%; padding: 0.75rem; font-size: 1rem; border: 1px solid #dadce0; border-radius: 8px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 1rem; margin-top: 2rem; }
 </style>
