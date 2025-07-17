@@ -33,7 +33,7 @@
             </li>
           </ul>
            <div class="action-buttons">
-            <button @click="backToState('search')">検索に戻る</button>
+            <button @click="resetToSearch">検索に戻る</button>
           </div>
         </div>
         
@@ -83,14 +83,15 @@
           </div>
           
           <div class="search-box follow-up-box">
-            <h2>さらに質問（分析の深掘り）</h2>
-            <div class="search-form">
-              <textarea v-model="followUpQuestion" placeholder="現在のデータについて、さらに質問を入力してください..." rows="3"></textarea>
-              <button class="primary" @click="getAnalysis" :disabled="loading.analysis">
-                <span v-if="!loading.analysis">追加で質問する</span><span v-else>分析中...</span>
-              </button>
-            </div>
+             <h2>さらに質問（分析の深掘り）</h2>
+             <div class="search-form">
+               <textarea v-model="followUpQuestion" placeholder="現在のデータについて、さらに質問を入力してください..." rows="3"></textarea>
+               <button class="primary" @click="getAnalysis" :disabled="loading.analysis">
+                 <span v-if="!loading.analysis">追加で質問する</span><span v-else>分析中...</span>
+               </button>
+             </div>
           </div>
+
           <div class="chart-card">
             <h2>データの可視化</h2>
             <DataChart 
@@ -145,7 +146,6 @@ const searchStats = async () => {
     error.value = '検索キーワードを入力してください。';
     return;
   }
-  // 検索時には、以前の選択状態をすべてリセットする
   backToState('search');
   loading.search = true;
   try {
@@ -214,6 +214,7 @@ const getAnalysis = async () => {
     
     if (uiState.value === 'result' && analysisResult.value && followUpQuestion.value) {
       analysisResult.value.explanation += `\n\n--- (追加の質問への回答) ---\n${data.explanation}`;
+      analysisResult.value.chartData = data.chartData;
     } else {
       analysisResult.value = data;
     }

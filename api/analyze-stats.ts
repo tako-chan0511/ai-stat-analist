@@ -1,20 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// --- 型定義 ---
-interface EStatDataValue {
-  '@time': string;
-  '$': string;
-  [key: string]: string;
-}
+interface EStatDataValue { '@time': string; '$': string; [key: string]: string; }
+interface AnalysisTarget { filters: { [key: string]: string }; filterNames: { [key: string]: string }; }
 
-interface AnalysisTarget {
-  filters: { [key: string]: string };
-  filterNames: { [key: string]: string };
-}
-
-/**
- * e-Stat APIを呼び出し、単一のデータ系列を取得するヘルパー関数
- */
 async function fetchSingleDataSet(appId: string, statsDataId: string, filters: any): Promise<EStatDataValue[]> {
   const params = new URLSearchParams({ appId, statsDataId });
   for (const [key, value] of Object.entries(filters)) {
@@ -30,7 +18,7 @@ async function fetchSingleDataSet(appId: string, statsDataId: string, filters: a
 
   if (eStatData.GET_STATS_DATA.RESULT.STATUS !== 0) {
     if (eStatData.GET_STATS_DATA.RESULT.ERROR_MSG.includes('該当データはありません')) {
-      return []; // データがない場合は空の配列を返す
+      return [];
     }
     throw new Error(`e-Stat Error: ${eStatData.GET_STATS_DATA.RESULT.ERROR_MSG}`);
   }
@@ -41,14 +29,10 @@ async function fetchSingleDataSet(appId: string, statsDataId: string, filters: a
   return Array.isArray(rawValues) ? rawValues : [rawValues];
 }
 
-/**
- * メインのAPIハンドラー関数
- */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
   
-  // ★★★ フロントエンドから 'question' を受け取るように修正 ★★★
-  const { statsDataId, analyses, question } = req.body as { statsDataId: string; analyses: AnalysisTarget[], question?: string };
+  const { statsDataId, analyses, question: initialQuestion } = req.body as { statsDataId: string; analyses: AnalysisTarget[]; question: string };
   const eStatAppId = process.env.ESTAT_APP_ID;
   const geminiApiKey = process.env.GEMINI_API_KEY;
 
@@ -88,20 +72,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const dataForPrompt = Object.entries(d.data).map(([year, value]) => ({ year, value }));
       return `- **データ名:** ${d.name}\n- **データ:** \`\`\`json\n${JSON.stringify(dataForPrompt.slice(-20))}\n\`\`\`\n`;
     }).join('');
-    
-    // ★★★ AIへの指示（プロンプト）を修正 ★★★
-    const finalQuestion = question || `以下の複数の統計データについて、それらの関係性、傾向、背景にある社会的・経済的要因を500字程度で分析・解説してください。`;
+
+    const question = initialQuestion || `以下の複数の統計データについて、それらの関係性、傾向、背景にある社会的・経済的要因を500字程度で分析・解説してください。`;
     const prompt = `
       あなたは日本のデータアナリストです。
       以下の統計データとユーザーからの質問を基に、プロフェッショナルな分析結果を日本語で返してください。
-      
-      **ユーザーからの質問:** 「${finalQuestion}」
-
+      **ユーザーからの質問:** 「${question}」
       **統計データ:**
       ${dataSummaryForAI}
-
       **指示:**
-      - **最重要:** 必ず提供された「統計データ」だけを基に分析してください。データに含まれない地域（例：福岡県、佐賀県）など、データからは読み取れない事柄に関する質問が来た場合は、「ご提示のデータには〇〇に関する情報は含まれておりません。提供されたデータの範囲で回答します。」のように前置きした上で、分かる範囲で回答してください。
+      - **最重要:** 必ず提供された「統計データ」だけを基に分析してください。データに含まれない事柄に関する質問が来た場合は、「ご提示のデータには〇〇に関する情報は含まれておりません。提供されたデータの範囲で回答します。」のように前置きした上で、分かる範囲で回答してください。
       - ユーザーの質問に答える形で、データの傾向（増加・減少など）を明確に述べた上で、その背景にある社会的な文脈や経済的な要因を考察してください。
       - 複数のデータがある場合は、それらの相関関係や関係性についても言及してください。
       - 専門家としての洞察（インサイト）を加えて、分かりやすく解説してください。
