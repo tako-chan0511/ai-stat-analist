@@ -4,11 +4,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { searchWord } = req.query;
   const eStatAppId = process.env.ESTAT_APP_ID;
 
-  if (!searchWord || typeof searchWord !== 'string') {
-    return res.status(400).json({ error: '検索キーワードが必要です。' });
-  }
-  if (!eStatAppId) {
-    return res.status(500).json({ error: 'APIキーがサーバー側で設定されていません。' });
+  if (!searchWord || typeof searchWord !== 'string' || !eStatAppId) {
+    return res.status(400).json({ error: 'リクエスト情報が不完全です。' });
   }
 
   try {
@@ -16,7 +13,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       appId: eStatAppId,
       lang: 'J',
       searchWord: searchWord,
-      limit: '20', // 少し多めに取得
+      limit: '50', 
     });
 
     const eStatUrl = `https://api.e-stat.go.jp/rest/3.0/app/json/getStatsList?${params.toString()}`;
@@ -38,18 +35,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     
     let tableList = data.GET_STATS_LIST.DATALIST_INF.TABLE_INF;
+    
+    if (!tableList) {
+        return res.status(200).json([]);
+    }
     if (!Array.isArray(tableList)) {
       tableList = [tableList];
     }
     
-    // ★★★ ここで日付の新しい順にソート ★★★
-    tableList.sort((a: any, b: any) => {
-      const dateA = new Date(a['@releaseDate']).getTime();
-      const dateB = new Date(b['@releaseDate']).getTime();
-      return dateB - dateA; // 降順ソート
-    });
+    const uniqueTableList = Array.from(new Map(tableList.map((item: any) => [item['@id'], item])).values());
 
-    res.status(200).json(tableList);
+    // ★★★ ここからが修正点 ★★★
+    uniqueTableList.sort((a: any, b: any) => {
+      // SURVEY_DATEをString()で文字列に変換してから、年を抽出する
+      const yearA = parseInt(String(a.SURVEY_DATE || '1900').substring(0, 4));
+      const yearB = parseInt(String(b.SURVEY_DATE || '1900').substring(0, 4));
+      return yearB - yearA; // 降順ソート
+    });
+    // ★★★ ここまでが修正点 ★★★
+
+    res.status(200).json(uniqueTableList);
 
   } catch (error: any) {
     console.error('An error occurred in search-stats handler:', error);

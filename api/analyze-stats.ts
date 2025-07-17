@@ -1,96 +1,112 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// ★★★ 型定義を追加 ★★★
+// --- 型定義 ---
 interface EStatDataValue {
   '@time': string;
   '$': string;
   [key: string]: string;
 }
 
+interface AnalysisTarget {
+  filters: { [key: string]: string };
+  filterNames: { [key: string]: string };
+}
+
+/**
+ * e-Stat APIを呼び出し、単一のデータ系列を取得するヘルパー関数
+ */
+async function fetchSingleDataSet(appId: string, statsDataId: string, filters: any): Promise<EStatDataValue[]> {
+  const params = new URLSearchParams({ appId, statsDataId });
+  for (const [key, value] of Object.entries(filters)) {
+    params.append(`cd${key.charAt(0).toUpperCase() + key.slice(1)}`, value as string);
+  }
+  const eStatUrl = `https://api.e-stat.go.jp/rest/3.0/app/json/getStatsData?${params.toString()}`;
+  console.log(`[Info] Getting stats data: ${eStatUrl}`);
+
+  const eStatResponse = await fetch(eStatUrl);
+  if (!eStatResponse.ok) throw new Error(`e-Stat API request failed: ${eStatResponse.status}`);
+  
+  const eStatData = await eStatResponse.json();
+
+  if (eStatData.GET_STATS_DATA.RESULT.STATUS !== 0) {
+    if (eStatData.GET_STATS_DATA.RESULT.ERROR_MSG.includes('該当データはありません')) {
+      return []; // データがない場合は空の配列を返す
+    }
+    throw new Error(`e-Stat Error: ${eStatData.GET_STATS_DATA.RESULT.ERROR_MSG}`);
+  }
+
+  const rawValues = eStatData.GET_STATS_DATA.STATISTICAL_DATA?.DATA_INF?.VALUE;
+  if (!rawValues) return [];
+  
+  return Array.isArray(rawValues) ? rawValues : [rawValues];
+}
+
+/**
+ * メインのAPIハンドラー関数
+ */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
   
-  const { statsDataId, filters, filterNames } = req.body;
+  // ★★★ フロントエンドから 'question' を受け取るように修正 ★★★
+  const { statsDataId, analyses, question } = req.body as { statsDataId: string; analyses: AnalysisTarget[], question?: string };
   const eStatAppId = process.env.ESTAT_APP_ID;
   const geminiApiKey = process.env.GEMINI_API_KEY;
 
-  if (!statsDataId || !filters || !eStatAppId || !geminiApiKey) {
+  if (!statsDataId || !analyses?.length || !eStatAppId || !geminiApiKey) {
     return res.status(400).json({ error: 'リクエスト情報が不完全です。' });
   }
 
   try {
-    // 1. e-Statからデータを取得
-    const params = new URLSearchParams({ appId: eStatAppId, statsDataId });
-    for (const [key, value] of Object.entries(filters)) {
-      params.append(`cd${key.charAt(0).toUpperCase() + key.slice(1)}`, value as string);
-    }
-    const eStatUrl = `https://api.e-stat.go.jp/rest/3.0/app/json/getStatsData?${params.toString()}`;
-    console.log(`[Info] Getting stats data: ${eStatUrl}`);
+    const datasetsRaw = await Promise.all(
+      analyses.map(analysis => fetchSingleDataSet(eStatAppId, statsDataId, analysis.filters))
+    );
 
-    const eStatResponse = await fetch(eStatUrl);
-    if (!eStatResponse.ok) throw new Error(`e-Stat API request failed: ${eStatResponse.status}`);
-    const eStatData = await eStatResponse.json();
+    const processedDatasets = datasetsRaw.map((values, i) => {
+      const yearlyData = values.reduce((acc, v) => {
+        const year = v['@time'].substring(0, 4);
+        const value = parseFloat(v['$']);
+        if (!isNaN(value)) acc[year] = value;
+        return acc;
+      }, {} as { [year: string]: number });
+      
+      return {
+        name: Object.values(analyses[i].filterNames).join(' - '),
+        data: yearlyData
+      };
+    });
 
-    if (eStatData.GET_STATS_DATA.RESULT.STATUS !== 0) {
-      if (eStatData.GET_STATS_DATA.RESULT.ERROR_MSG.includes('該当データはありません')) {
-         return res.status(200).json({
-          explanation: '指定された条件に合致するデータが見つかりませんでした。フィルターの条件を変更して再度お試しください。',
-          chartData: { labels: [], datasets: [] }
-        });
-      }
-      throw new Error(`e-Stat Error: ${eStatData.GET_STATS_DATA.RESULT.ERROR_MSG}`);
-    }
-
-    const rawValues = eStatData.GET_STATS_DATA.STATISTICAL_DATA?.DATA_INF?.VALUE;
-    let values: EStatDataValue[] = []; 
-
-    if (rawValues) {
-      if (Array.isArray(rawValues)) {
-        values = rawValues;
-      } else {
-        values = [rawValues];
-      }
-    }
-    
-    if (values.length === 0) {
-      return res.status(200).json({
-        explanation: '指定された条件に合致するデータが見つかりませんでした。フィルターの条件を変更して再度お試しください。',
-        chartData: { labels: [], datasets: [] }
-      });
-    }
-
-    // 2. グラフ用にデータを整形
-    const labels = [...new Set(values.map(v => v['@time'].substring(0, 4)))].sort();
+    const allYears = [...new Set(processedDatasets.flatMap(d => Object.keys(d.data)))].sort();
     const chartData = {
-      labels,
-      datasets: [{
-        label: Object.values(filterNames).join(' - '),
-        data: labels.map(year => {
-          const yearData = values.find(v => v['@time'].startsWith(year));
-          return yearData ? parseFloat(yearData['$']) : null;
-        }),
-      }]
-    };
-
-    // 3. AI分析用にデータを整形
-    const dataForAI = {
-      filter: filterNames,
-      data: values.map(v => ({ year: v['@time'].substring(0, 4), value: v['$'] }))
+      labels: allYears,
+      datasets: processedDatasets.map(dataset => ({
+        label: dataset.name,
+        data: allYears.map(year => dataset.data[year] ?? null)
+      }))
     };
     
-    const question = `以下の統計データについて、その傾向と背景にある社会的・経済的要因を300字程度で分析・解説してください。\n\nデータ項目: ${JSON.stringify(filterNames)}\n`;
-
+    const dataSummaryForAI = processedDatasets.map(d => {
+      const dataForPrompt = Object.entries(d.data).map(([year, value]) => ({ year, value }));
+      return `- **データ名:** ${d.name}\n- **データ:** \`\`\`json\n${JSON.stringify(dataForPrompt.slice(-20))}\n\`\`\`\n`;
+    }).join('');
+    
+    // ★★★ AIへの指示（プロンプト）を修正 ★★★
+    const finalQuestion = question || `以下の複数の統計データについて、それらの関係性、傾向、背景にある社会的・経済的要因を500字程度で分析・解説してください。`;
     const prompt = `
       あなたは日本のデータアナリストです。
       以下の統計データとユーザーからの質問を基に、プロフェッショナルな分析結果を日本語で返してください。
-      **ユーザーからの質問:** 「${question}」
-      **統計データ:** \`\`\`json\n${JSON.stringify(dataForAI.data.slice(-20))}\n\`\`\`
+      
+      **ユーザーからの質問:** 「${finalQuestion}」
+
+      **統計データ:**
+      ${dataSummaryForAI}
+
       **指示:**
-      - データの傾向（増加・減少など）を明確に述べた上で、その背景にある社会的な文脈や経済的な要因を考察してください。
+      - **最重要:** 必ず提供された「統計データ」だけを基に分析してください。データに含まれない地域（例：福岡県、佐賀県）など、データからは読み取れない事柄に関する質問が来た場合は、「ご提示のデータには〇〇に関する情報は含まれておりません。提供されたデータの範囲で回答します。」のように前置きした上で、分かる範囲で回答してください。
+      - ユーザーの質問に答える形で、データの傾向（増加・減少など）を明確に述べた上で、その背景にある社会的な文脈や経済的な要因を考察してください。
+      - 複数のデータがある場合は、それらの相関関係や関係性についても言及してください。
       - 専門家としての洞察（インサイト）を加えて、分かりやすく解説してください。
     `;
     
-    // 4. Gemini APIにリクエスト
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${geminiApiKey}`;
     const apiResponse = await fetch(apiUrl, {
       method: 'POST',
